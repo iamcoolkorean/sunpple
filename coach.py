@@ -43,7 +43,7 @@ class SunppleCoach:
             try:
                 genai.configure(api_key=key)
                 model = genai.GenerativeModel(
-                    model_name="gemini-pro",
+                    model_name="gemini-2.5-flash",
                     generation_config={
                         "temperature": 0.7,
                         "max_output_tokens": 500,
