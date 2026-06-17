@@ -1,8 +1,8 @@
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
+from datetime import date
 
-# Supabase 클라이언트 초기화
 @st.cache_resource
 def get_supabase_client():
     url = st.secrets["SUPABASE_URL"]
@@ -14,11 +14,9 @@ def _hash_password(password):
 
 def register_user(user_id, password, name):
     supabase = get_supabase_client()
-    # 중복 확인
     existing = supabase.table("users").select("user_id").eq("user_id", user_id).execute()
     if existing.data:
         return False
-    # 저장
     supabase.table("users").insert({
         "user_id": user_id,
         "password_hash": _hash_password(password),
@@ -42,25 +40,29 @@ def get_user_data(user_id):
         return result.data[0]
     return None
 
-def save_messages(user_id, messages):
-    """해당 사용자의 기존 메시지를 모두 지우고 새로 저장 (간단한 방법)"""
+def set_journey_start_date(user_id, start_date_str):
+    """처음 시작할 때만 호출: 이미 시작일이 있으면 무시"""
     supabase = get_supabase_client()
-    # 기존 메시지 삭제
+    # 이미 시작일이 있는지 확인
+    current = supabase.table("users").select("journey_start_date").eq("user_id", user_id).execute()
+    if current.data and current.data[0]["journey_start_date"] is not None:
+        return  # 이미 설정되어 있으면 변경 안 함
+    supabase.table("users").update({"journey_start_date": start_date_str}).eq("user_id", user_id).execute()
+
+def save_messages(user_id, messages):
+    supabase = get_supabase_client()
     supabase.table("messages").delete().eq("user_id", user_id).execute()
-    # 새로 삽입
     for msg in messages:
         supabase.table("messages").insert({
             "user_id": user_id,
-            "day_number": msg.get("day_number", 1),  # day_number 정보가 필요하므로 messages에 day_number를 포함해야 함
+            "day_number": msg.get("day_number", 1),
             "role": msg["role"],
             "content": msg["content"]
         }).execute()
 
 def load_messages(user_id):
-    """해당 사용자의 모든 메시지를 시간순으로 불러오기"""
     supabase = get_supabase_client()
     result = supabase.table("messages").select("*").eq("user_id", user_id).order("created_at").execute()
     if result.data:
-        # 반환 형식을 [{"role": ..., "content": ...}] 형태로 변환
         return [{"role": m["role"], "content": m["content"], "day_number": m["day_number"]} for m in result.data]
     return []
