@@ -4,7 +4,8 @@ from pathlib import Path
 
 from auth import (
     authenticate, register_user, get_user_data,
-    save_messages, load_messages, set_journey_start_date
+    save_messages, load_messages, set_journey_start_date,
+    delete_user
 )
 from coach import SunppleCoach
 
@@ -14,8 +15,6 @@ st.set_page_config(
     page_icon="☀️",
     layout="centered"
 )
-
-Path("data").mkdir(exist_ok=True)
 
 # --- 세션 상태 초기화 ---
 if "user" not in st.session_state:
@@ -90,22 +89,18 @@ user_data = st.session_state.user_data
 # 여정 시작일 계산
 start_date_str = user_data.get("journey_start_date")
 if start_date_str:
-    # 문자열로 저장되어 있으므로 변환
     journey_start = datetime.strptime(start_date_str, "%Y-%m-%d").date()
     day_number = (today - journey_start).days + 1
 else:
-    # 아직 시작 안 했으면 Day 1
     day_number = 1
 
-# 1~7로 제한
 if day_number < 1:
     day_number = 1
 elif day_number > 7:
     day_number = 7
 
-# 7일 완료 후 처리
+# 7일차 이후 완료 메시지
 if day_number == 7 and start_date_str and (today - datetime.strptime(start_date_str, "%Y-%m-%d").date()).days >= 7:
-    # 7일차 이후 로그인하면 완료 메시지 표시
     st.success("7일간의 여정이 완료되었습니다! 🎉")
     st.info("지난 대화를 복습하거나 새로운 목표를 세워보세요.")
     st.stop()
@@ -123,11 +118,30 @@ with st.sidebar:
         else:
             st.markdown(f"⏳ Day {i} - 대기")
     st.divider()
+    
+    # 로그아웃 버튼
     if st.button("로그아웃", use_container_width=True):
         st.session_state.authenticated = False
         st.session_state.user = None
         st.session_state.messages = []
         st.rerun()
+    
+    # 회원 탈퇴 섹션
+    with st.expander("회원 탈퇴"):
+        st.warning("탈퇴 시 모든 대화 기록이 영구 삭제되며 복구할 수 없습니다.")
+        with st.form("delete_account_form"):
+            del_pw = st.text_input("비밀번호 확인", type="password", key="delete_pw")
+            del_submit = st.form_submit_button("탈퇴하기", use_container_width=True, type="primary")
+            if del_submit:
+                success, msg = delete_user(st.session_state.user, del_pw)
+                if success:
+                    st.success(msg)
+                    st.session_state.authenticated = False
+                    st.session_state.user = None
+                    st.session_state.messages = []
+                    st.rerun()
+                else:
+                    st.error(msg)
 
 # 오늘의 대화
 day_titles = {
@@ -153,18 +167,15 @@ coach = st.session_state.coach
 if len(st.session_state.messages) == 0:
     first_message = coach.get_opening(day_number, user_data)
     st.session_state.messages.append({"role": "assistant", "content": first_message, "day_number": day_number})
-    # 첫 대화 시작 시 시작일 설정
     set_journey_start_date(st.session_state.user, str(today))
-    st.session_state.user_data["journey_start_date"] = str(today)  # 세션 업데이트
+    st.session_state.user_data["journey_start_date"] = str(today)
     save_messages(st.session_state.user, st.session_state.messages)
     st.markdown(f'<div class="coach-msg">☀️ {first_message}</div>', unsafe_allow_html=True)
 
-# 입력창
 with st.form("chat_form", clear_on_submit=True):
     user_input = st.text_input("당신의 이야기를 들려주세요...", key="user_input", placeholder="편안하게 답변해주세요.")
     submit = st.form_submit_button("답변하기", use_container_width=True)
     if submit and user_input:
-        # 첫 응답 시에도 시작일이 없으면 설정 (오프닝에서 저장했지만 혹시 모르니)
         if not st.session_state.user_data.get("journey_start_date"):
             set_journey_start_date(st.session_state.user, str(today))
             st.session_state.user_data["journey_start_date"] = str(today)
