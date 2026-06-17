@@ -41,12 +41,10 @@ def get_user_data(user_id):
     return None
 
 def set_journey_start_date(user_id, start_date_str):
-    """처음 시작할 때만 호출: 이미 시작일이 있으면 무시"""
     supabase = get_supabase_client()
-    # 이미 시작일이 있는지 확인
     current = supabase.table("users").select("journey_start_date").eq("user_id", user_id).execute()
     if current.data and current.data[0]["journey_start_date"] is not None:
-        return  # 이미 설정되어 있으면 변경 안 함
+        return
     supabase.table("users").update({"journey_start_date": start_date_str}).eq("user_id", user_id).execute()
 
 def save_messages(user_id, messages):
@@ -66,3 +64,14 @@ def load_messages(user_id):
     if result.data:
         return [{"role": m["role"], "content": m["content"], "day_number": m["day_number"]} for m in result.data]
     return []
+
+def delete_user(user_id, password):
+    supabase = get_supabase_client()
+    result = supabase.table("users").select("password_hash").eq("user_id", user_id).execute()
+    if not result.data or len(result.data) == 0:
+        return False, "존재하지 않는 사용자입니다."
+    stored_hash = result.data[0]["password_hash"]
+    if stored_hash != _hash_password(password):
+        return False, "비밀번호가 일치하지 않습니다."
+    supabase.table("users").delete().eq("user_id", user_id).execute()
+    return True, "탈퇴가 완료되었습니다."
