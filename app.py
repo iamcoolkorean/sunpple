@@ -1,8 +1,11 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from pathlib import Path
 
-from auth import authenticate, register_user, get_user_data, save_messages, load_messages
+from auth import (
+    authenticate, register_user, get_user_data,
+    save_messages, load_messages, set_journey_start_date
+)
 from coach import SunppleCoach
 
 # --- 초기 설정 ---
@@ -12,7 +15,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# 데이터 디렉토리 생성 (더 이상 필요 없지만 Path 객체 남아도 됨)
 Path("data").mkdir(exist_ok=True)
 
 # --- 세션 상태 초기화 ---
@@ -44,7 +46,7 @@ st.markdown("""
 if not st.session_state.authenticated:
     st.markdown('<div class="main-header">☀️ Sunpple</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">당신의 무기를 찾는 7일간의 여정</div>', unsafe_allow_html=True)
-    
+
     tab1, tab2 = st.tabs(["로그인", "회원가입"])
     with tab1:
         with st.form("login_form"):
@@ -82,18 +84,35 @@ if not st.session_state.authenticated:
 # --- 로그인 후 ---
 st.markdown('<div class="main-header">☀️ Sunpple</div>', unsafe_allow_html=True)
 
-today = datetime.now().date()
-weekday = today.weekday()
-day_number = weekday + 1 if weekday < 7 else 7  # 7일까지만
+today = date.today()
+user_data = st.session_state.user_data
 
-if day_number > 7:
+# 여정 시작일 계산
+start_date_str = user_data.get("journey_start_date")
+if start_date_str:
+    # 문자열로 저장되어 있으므로 변환
+    journey_start = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    day_number = (today - journey_start).days + 1
+else:
+    # 아직 시작 안 했으면 Day 1
+    day_number = 1
+
+# 1~7로 제한
+if day_number < 1:
+    day_number = 1
+elif day_number > 7:
+    day_number = 7
+
+# 7일 완료 후 처리
+if day_number == 7 and start_date_str and (today - datetime.strptime(start_date_str, "%Y-%m-%d").date()).days >= 7:
+    # 7일차 이후 로그인하면 완료 메시지 표시
     st.success("7일간의 여정이 완료되었습니다! 🎉")
     st.info("지난 대화를 복습하거나 새로운 목표를 세워보세요.")
     st.stop()
 
 # 사이드바
 with st.sidebar:
-    st.markdown(f"### 👋 {st.session_state.user_data.get('name', st.session_state.user)}님")
+    st.markdown(f"### 👋 {user_data.get('name', st.session_state.user)}님")
     st.markdown(f"**Day {day_number}/7**")
     st.progress(day_number / 7, text=f"여정 {day_number}/7")
     for i in range(1, 8):
@@ -105,7 +124,6 @@ with st.sidebar:
             st.markdown(f"⏳ Day {i} - 대기")
     st.divider()
     if st.button("로그아웃", use_container_width=True):
-        # 이미 매번 저장하므로 추가 저장 없이 세션만 정리
         st.session_state.authenticated = False
         st.session_state.user = None
         st.session_state.messages = []
@@ -121,11 +139,10 @@ day_titles = {
     6: "가능성의 지도",
     7: "당신의 무기와 작전 지도",
 }
-day_korean = ["월", "화", "수", "목", "금", "토", "일"]
-st.markdown(f'<div class="day-badge">☀️ Day {day_number} - {day_korean[day_number-1]}요일</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="day-badge">☀️ Day {day_number}</div>', unsafe_allow_html=True)
 st.markdown(f"### {day_titles[day_number]}")
 
-# 이전 대화 표시 (day_number 포함해서 저장했으므로 표시할 때는 role, content만)
+# 이전 대화 표시
 for msg in st.session_state.messages:
     if msg["role"] == "user":
         st.markdown(f'<div class="user-msg">🧑‍🎓 {msg["content"]}</div>', unsafe_allow_html=True)
@@ -134,8 +151,11 @@ for msg in st.session_state.messages:
 
 coach = st.session_state.coach
 if len(st.session_state.messages) == 0:
-    first_message = coach.get_opening(day_number, st.session_state.user_data)
+    first_message = coach.get_opening(day_number, user_data)
     st.session_state.messages.append({"role": "assistant", "content": first_message, "day_number": day_number})
+    # 첫 대화 시작 시 시작일 설정
+    set_journey_start_date(st.session_state.user, str(today))
+    st.session_state.user_data["journey_start_date"] = str(today)  # 세션 업데이트
     save_messages(st.session_state.user, st.session_state.messages)
     st.markdown(f'<div class="coach-msg">☀️ {first_message}</div>', unsafe_allow_html=True)
 
@@ -144,10 +164,15 @@ with st.form("chat_form", clear_on_submit=True):
     user_input = st.text_input("당신의 이야기를 들려주세요...", key="user_input", placeholder="편안하게 답변해주세요.")
     submit = st.form_submit_button("답변하기", use_container_width=True)
     if submit and user_input:
+        # 첫 응답 시에도 시작일이 없으면 설정 (오프닝에서 저장했지만 혹시 모르니)
+        if not st.session_state.user_data.get("journey_start_date"):
+            set_journey_start_date(st.session_state.user, str(today))
+            st.session_state.user_data["journey_start_date"] = str(today)
+
         st.session_state.messages.append({"role": "user", "content": user_input, "day_number": day_number})
         pure_messages = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
         with st.spinner("Sunpple이 생각 중..."):
-            response = coach.get_response(day_number=day_number, messages=pure_messages, user_data=st.session_state.user_data)
+            response = coach.get_response(day_number=day_number, messages=pure_messages, user_data=user_data)
         st.session_state.messages.append({"role": "assistant", "content": response, "day_number": day_number})
         save_messages(st.session_state.user, st.session_state.messages)
         st.rerun()
