@@ -1,7 +1,6 @@
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
-from datetime import date
 
 @st.cache_resource
 def get_supabase_client():
@@ -20,7 +19,8 @@ def register_user(user_id, password, name):
     supabase.table("users").insert({
         "user_id": user_id,
         "password_hash": _hash_password(password),
-        "name": name
+        "name": name,
+        "current_day": 1      # 처음엔 Day 1
     }).execute()
     return True
 
@@ -40,12 +40,9 @@ def get_user_data(user_id):
         return result.data[0]
     return None
 
-def set_journey_start_date(user_id, start_date_str):
+def set_current_day(user_id, day):
     supabase = get_supabase_client()
-    current = supabase.table("users").select("journey_start_date").eq("user_id", user_id).execute()
-    if current.data and current.data[0]["journey_start_date"] is not None:
-        return
-    supabase.table("users").update({"journey_start_date": start_date_str}).eq("user_id", user_id).execute()
+    supabase.table("users").update({"current_day": day}).eq("user_id", user_id).execute()
 
 def save_messages(user_id, messages):
     supabase = get_supabase_client()
@@ -58,9 +55,13 @@ def save_messages(user_id, messages):
             "content": msg["content"]
         }).execute()
 
-def load_messages(user_id):
+def load_messages(user_id, day_number=None):
+    """day_number가 주어지면 해당 일차만, 아니면 전체 로드"""
     supabase = get_supabase_client()
-    result = supabase.table("messages").select("*").eq("user_id", user_id).order("created_at").execute()
+    query = supabase.table("messages").select("*").eq("user_id", user_id).order("created_at")
+    if day_number is not None:
+        query = query.eq("day_number", day_number)
+    result = query.execute()
     if result.data:
         return [{"role": m["role"], "content": m["content"], "day_number": m["day_number"]} for m in result.data]
     return []
