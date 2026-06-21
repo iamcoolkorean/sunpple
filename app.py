@@ -37,7 +37,7 @@ st.markdown("""
 # --- 로그인 / 회원가입 (기존과 동일) ---
 if not st.session_state.authenticated:
     st.markdown('<div class="main-header">☀️ Sunpple</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">당신의 무기를 찾는 7일간의 여정('26.06.21 ver.)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">당신의 무기를 찾는 7일간의 여정(26.06.21 ver.)</div>', unsafe_allow_html=True)
 
     tab1, tab2 = st.tabs(["로그인", "회원가입"])
     with tab1:
