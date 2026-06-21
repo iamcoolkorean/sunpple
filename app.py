@@ -7,7 +7,7 @@ from auth import (
 from coach import SunppleCoach
 
 # --- 초기 설정 ---
-st.set_page_config(page_title="Sunpple - 7일 커리어 디스커버리", page_icon="☀️", layout="centered")
+st.set_page_config(page_title="Sunpple - 7일 커리어 디스커버리('26.06.21 ver.", page_icon="☀️", layout="centered")
 
 if "user" not in st.session_state:
     st.session_state.user = None
