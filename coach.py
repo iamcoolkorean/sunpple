@@ -83,10 +83,17 @@ class SunppleCoach:
                     model_name="gemini-2.5-flash",
                     generation_config={
                         "temperature": 0.7,
-                        "max_output_tokens": 1024,
+                        "max_output_tokens": 2048,
                     }
                 )
+                safety_settings = [
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                ]
                 
+                # Gemini 포맷으로 변환
                 gemini_messages = []
                 system_content = None
                 for msg in conversation:
@@ -110,31 +117,26 @@ class SunppleCoach:
                 if gemini_messages and gemini_messages[-1]["role"] == "model":
                     gemini_messages.pop()
                 
+                # 일관된 채팅 세션 시작
                 if len(gemini_messages) == 1:
-                    response = model.generate_content(
-                        gemini_messages[0]["parts"][0],
-                        safety_settings=[
-                            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                        ]
-                    )
-                    chat = None
+                    chat = model.start_chat(history=[])
+                    response = chat.send_message(gemini_messages[0]["parts"][0], safety_settings=safety_settings)
                 else:
                     chat = model.start_chat(history=gemini_messages[:-1])
-                    response = chat.send_message(gemini_messages[-1]["parts"][0])
+                    response = chat.send_message(gemini_messages[-1]["parts"][0], safety_settings=safety_settings)
                 
-                response_text = response.text
+                full_response = response.text
                 
-                if response_text and not response_text.strip().endswith(('.', '!', '?', ')')):
-                    if chat:
-                        continuation = chat.send_message("이어서 작성해 주세요.")
-                        if continuation.text:
-                            response_text += continuation.text
+                # MAX_TOKENS로 인해 잘린 경우 자동으로 이어쓰기
+                while response.candidates and response.candidates[0].finish_reason.name == 'MAX_TOKENS':
+                    response = chat.send_message(
+                        "계속해서 이어서 작성해 주세요. 완전한 문장으로 마무리해 주세요.",
+                        safety_settings=safety_settings
+                    )
+                    full_response += response.text
                 
                 self.key_status[key_index]['fail_count'] = 0
-                return response_text
+                return full_response.strip()
                 
             except Exception as e:
                 last_error = e
@@ -145,7 +147,7 @@ class SunppleCoach:
                 else:
                     break
         
-        return f"죄송해요, 잠시 응답을 생성하기 어렵네요. 다시 시도해 주시겠어요? ☀️\n\n(오류: {str(last_error)[:100]})"
+        return f"죄송해요, 잠시 응답을 생성하기 어려네요. 다시 시도해 주시겠어요? ☀️\n\n(오류: {str(last_error)[:100]})"
 
     def get_opening(self, day_number, user_data):
         name = user_data.get("name", "사용자")
