@@ -2,6 +2,7 @@ import google.generativeai as genai
 import streamlit as st
 import time
 import random
+from datetime import datetime, timedelta
 
 class SunppleCoach:
     def __init__(self):
@@ -12,7 +13,9 @@ class SunppleCoach:
                 self.api_keys.append(key)
         if not self.api_keys:
             raise ValueError("GEMINI_API_KEY_1 ~ 8 중 최소 하나는 설정해야 합니다.")
-        self.key_usage_count = {i: 0 for i in range(len(self.api_keys))}
+        
+        # API 키 상태 관리: {인덱스: {'cooldown_until': datetime, 'fail_count': int}}
+        self.key_status = {i: {'cooldown_until': datetime.min, 'fail_count': 0} for i in range(len(self.api_keys))}
 
         self.system_prompt = """당신은 '선플(Sunpple)'입니다. 7일간의 커리어 디스커버리 여정을 함께하는 AI 커리어 동반자입니다.
 
@@ -32,19 +35,47 @@ class SunppleCoach:
 - 당신은 사용자의 성격보다 ‘직무 역량’과 ‘산업 적합도’를 분석하는 커리어 코치입니다.  
   단, 업무 성향(work style)은 중요한 데이터이므로 반드시 수집하세요.
 - 모든 질문은 가능한 한 보기(선택지)를 제공하여 사용자가 쉽게 답할 수 있도록 하세요.
-- 응답은 항상 완전한 문장으로 마무리하세요. 절대 중간에 끝내지 마세요."""
+- 응답은 항상 완전한 문장으로 마무리하세요. 중간에 끝내지 마세요."""
 
-    def _get_next_key(self):
-        min_usage = min(self.key_usage_count.values())
-        available_keys = [i for i, count in self.key_usage_count.items() if count == min_usage]
-        selected_index = random.choice(available_keys)
-        self.key_usage_count[selected_index] += 1
-        return self.api_keys[selected_index]
+    def _get_available_key(self):
+        """사용 가능한 키 중 랜덤 선택 (쿨다운 상태면 제외)"""
+        now = datetime.now()
+        available = [i for i, status in self.key_status.items() if now >= status['cooldown_until']]
+        
+        if not available:
+            # 모든 키가 쿨다운이면 가장 빨리 풀리는 키를 기다렸다가 사용
+            min_cooldown = min(status['cooldown_until'] for status in self.key_status.values())
+            wait_time = max(0, (min_cooldown - now).total_seconds())
+            st.warning(f"모든 API 키가 일시적 제한 상태입니다. {wait_time:.1f}초 후 자동 재시도됩니다.")
+            time.sleep(wait_time + 1)
+            return self._get_available_key()
+        
+        return random.choice(available)
 
-    def _call_gemini(self, conversation, max_retries=3):
+    def _handle_rate_limit(self, key_index):
+        """429 오류 발생 시 해당 키의 쿨다운 시간 증가 (지수 백오프)"""
+        fail_count = self.key_status[key_index]['fail_count'] + 1
+        cooldown_seconds = min(2 ** fail_count, 60)  # 최대 60초
+        self.key_status[key_index]['fail_count'] = fail_count
+        self.key_status[key_index]['cooldown_until'] = datetime.now() + timedelta(seconds=cooldown_seconds)
+        st.info(f"API 요청이 일시적으로 많아 {cooldown_seconds}초 후 다시 시도합니다. (키 {key_index+1})")
+
+    def _truncate_conversation(self, conversation, max_turns=8):
+        """대화가 너무 길면 최근 max_turns만 남깁니다 (시스템 프롬프트 유지)."""
+        if len(conversation) > max_turns:
+            system_msgs = [msg for msg in conversation if msg["role"] == "system"]
+            other_msgs = [msg for msg in conversation if msg["role"] != "system"]
+            return system_msgs + other_msgs[-(max_turns):]
+        return conversation
+
+    def _call_gemini(self, conversation, max_retries=5):
         last_error = None
+        conversation = self._truncate_conversation(conversation)
+        
         for attempt in range(max_retries):
-            key = self._get_next_key()
+            key_index = self._get_available_key()
+            key = self.api_keys[key_index]
+            
             try:
                 genai.configure(api_key=key)
                 model = genai.GenerativeModel(
@@ -54,6 +85,8 @@ class SunppleCoach:
                         "max_output_tokens": 2048,
                     }
                 )
+                
+                # Gemini 형식으로 변환
                 gemini_messages = []
                 system_content = None
                 for msg in conversation:
@@ -67,6 +100,7 @@ class SunppleCoach:
                         gemini_messages.append({"role": "user", "parts": [content]})
                     elif msg["role"] == "assistant":
                         gemini_messages.append({"role": "model", "parts": [msg["content"]]})
+                
                 if system_content and gemini_messages:
                     gemini_messages[0]["parts"][0] = f"[지침]\n{system_content}\n\n---\n\n{gemini_messages[0]['parts'][0]}"
                 elif system_content and not gemini_messages:
@@ -75,6 +109,8 @@ class SunppleCoach:
                     gemini_messages.insert(0, {"role": "user", "parts": ["(시작)"]})
                 if gemini_messages and gemini_messages[-1]["role"] == "model":
                     gemini_messages.pop()
+                
+                # API 호출
                 if len(gemini_messages) == 1:
                     response = model.generate_content(
                         gemini_messages[0]["parts"][0],
@@ -85,19 +121,34 @@ class SunppleCoach:
                             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                         ]
                     )
+                    chat = None  # 단일 메시지에서는 채팅 세션 없음
                 else:
                     chat = model.start_chat(history=gemini_messages[:-1])
                     response = chat.send_message(gemini_messages[-1]["parts"][0])
-                return response.text
+                
+                response_text = response.text
+                
+                # 응답 완성도 검사: 마지막 문장이 구두점으로 끝나지 않으면 이어서 생성
+                if response_text and not response_text.strip().endswith(('.', '!', '?', ')')):
+                    if chat:
+                        continuation = chat.send_message("이어서 작성해 주세요.")
+                        if continuation.text:
+                            response_text += continuation.text
+                
+                # 성공 시 해당 키의 실패 카운트 초기화
+                self.key_status[key_index]['fail_count'] = 0
+                return response_text
+                
             except Exception as e:
                 last_error = e
                 error_str = str(e)
                 if "429" in error_str or "quota" in error_str.lower() or "rate" in error_str.lower():
-                    time.sleep(0.5)
+                    self._handle_rate_limit(key_index)
                     continue
                 else:
                     break
-        return f"죄송해요, 잠시 생각이 꼬였어요. 다시 한 번 말씀해주실래요? ☀️\n\n(오류: {str(last_error)[:100]})"
+        
+        return f"죄송해요, 잠시 응답을 생성하기 어렵네요. 다시 시도해 주시겠어요? ☀️\n\n(오류: {str(last_error)[:100]})"
 
     def get_opening(self, day_number, user_data):
         name = user_data.get("name", "사용자")
