@@ -1,6 +1,7 @@
 import hashlib
 import streamlit as st
 from supabase import create_client, Client
+from datetime import date
 
 @st.cache_resource
 def get_supabase_client():
@@ -20,7 +21,7 @@ def register_user(user_id, password, name):
         "user_id": user_id,
         "password_hash": _hash_password(password),
         "name": name,
-        "current_day": 1      # 처음엔 Day 1
+        "current_day": 1
     }).execute()
     return True
 
@@ -56,7 +57,6 @@ def save_messages(user_id, messages):
         }).execute()
 
 def load_messages(user_id, day_number=None):
-    """day_number가 주어지면 해당 일차만, 아니면 전체 로드"""
     supabase = get_supabase_client()
     query = supabase.table("messages").select("*").eq("user_id", user_id).order("created_at")
     if day_number is not None:
@@ -65,6 +65,11 @@ def load_messages(user_id, day_number=None):
     if result.data:
         return [{"role": m["role"], "content": m["content"], "day_number": m["day_number"]} for m in result.data]
     return []
+
+def delete_messages_by_day(user_id, day_number):
+    """특정 Day의 대화만 삭제"""
+    supabase = get_supabase_client()
+    supabase.table("messages").delete().eq("user_id", user_id).eq("day_number", day_number).execute()
 
 def delete_user(user_id, password):
     supabase = get_supabase_client()
