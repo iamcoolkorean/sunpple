@@ -43,7 +43,6 @@ class SunppleCoach:
         available = [i for i, status in self.key_status.items() if now >= status['cooldown_until']]
         
         if not available:
-            # 모든 키가 쿨다운이면 가장 빨리 풀리는 키를 기다렸다가 사용
             min_cooldown = min(status['cooldown_until'] for status in self.key_status.values())
             wait_time = max(0, (min_cooldown - now).total_seconds())
             st.warning(f"모든 API 키가 일시적 제한 상태입니다. {wait_time:.1f}초 후 자동 재시도됩니다.")
@@ -55,13 +54,13 @@ class SunppleCoach:
     def _handle_rate_limit(self, key_index):
         """429 오류 발생 시 해당 키의 쿨다운 시간 증가 (지수 백오프)"""
         fail_count = self.key_status[key_index]['fail_count'] + 1
-        cooldown_seconds = min(2 ** fail_count, 60)  # 최대 60초
+        cooldown_seconds = min(2 ** fail_count, 60)
         self.key_status[key_index]['fail_count'] = fail_count
         self.key_status[key_index]['cooldown_until'] = datetime.now() + timedelta(seconds=cooldown_seconds)
         st.info(f"API 요청이 일시적으로 많아 {cooldown_seconds}초 후 다시 시도합니다. (키 {key_index+1})")
 
     def _truncate_conversation(self, conversation, max_turns=8):
-        """대화가 너무 길면 최근 max_turns만 남깁니다 (시스템 프롬프트 유지)."""
+        """대화가 너무 길면 최근 max_turns만 남깁니다."""
         if len(conversation) > max_turns:
             system_msgs = [msg for msg in conversation if msg["role"] == "system"]
             other_msgs = [msg for msg in conversation if msg["role"] != "system"]
@@ -86,7 +85,6 @@ class SunppleCoach:
                     }
                 )
                 
-                # Gemini 형식으로 변환
                 gemini_messages = []
                 system_content = None
                 for msg in conversation:
@@ -110,7 +108,6 @@ class SunppleCoach:
                 if gemini_messages and gemini_messages[-1]["role"] == "model":
                     gemini_messages.pop()
                 
-                # API 호출
                 if len(gemini_messages) == 1:
                     response = model.generate_content(
                         gemini_messages[0]["parts"][0],
@@ -121,21 +118,19 @@ class SunppleCoach:
                             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
                         ]
                     )
-                    chat = None  # 단일 메시지에서는 채팅 세션 없음
+                    chat = None
                 else:
                     chat = model.start_chat(history=gemini_messages[:-1])
                     response = chat.send_message(gemini_messages[-1]["parts"][0])
                 
                 response_text = response.text
                 
-                # 응답 완성도 검사: 마지막 문장이 구두점으로 끝나지 않으면 이어서 생성
                 if response_text and not response_text.strip().endswith(('.', '!', '?', ')')):
                     if chat:
                         continuation = chat.send_message("이어서 작성해 주세요.")
                         if continuation.text:
                             response_text += continuation.text
                 
-                # 성공 시 해당 키의 실패 카운트 초기화
                 self.key_status[key_index]['fail_count'] = 0
                 return response_text
                 
@@ -328,46 +323,49 @@ class SunppleCoach:
 - 이전 대화를 실제로 분석하여 패턴을 요약하세요.
 - 내일 구체적 커리어 가설을 제시할 것이라고 예고하세요.""",
 
-            6: f"""[Day 6 지침 - 커리어 가설 제시]
-오늘의 목표: 지금까지의 모든 데이터(스킬, 몰입 유형, 성향, 산업 흥미, 업무 환경 선호도)를 종합하여 {name}님에게 맞는 3가지 커리어 가설을 제시하세요.
+            6: f"""[Day 6 지침 - 커리어 가설 제시 (데이터 기반 의무)]
+오늘의 목표: 지금까지 수집된 {name}님의 **모든 데이터**를 종합하여, **오직 {name}님만을 위한** 3가지 커리어 가설을 제시하세요.
+일반적인 조언은 절대 금지. 반드시 아래 데이터 요약을 먼저 제시한 후 가설로 연결하세요.
 
-진행 방식:
-1. 먼저 5일간의 데이터를 종합한 사용자 프로필을 한 문장으로 제시 (핵심 강점 + 성향 + 관심 산업 포함)
-2. 가설 1 (직관적 방향): 전공/경험과 연결되면서 강점이 살아나는 포지션
-   - 직무명 + 차별화 포인트 + 구체적 상황 예시
-3. 가설 2 (숨은 가능성): 의외의 직무, 전공 외 강점 활용
-   - 직무명 + 숨은 강점 + 유사 사례
-4. 가설 3 (도전적 방향): 핵심 가치와 업무 환경 선호도에 가장 부합하는 방향
-   - 직무명 + 가치/환경 연결 + 장애물 극복 시 얻는 것
-5. 세 가설에 대한 선호도와 이유 묻기
+[필수 데이터 요약 - 아래 항목을 반드시 채워서 먼저 보여줄 것]
+1. 학과/전공:
+2. 핵심 강점 (잘하는 작업 유형):
+3. 실제 몰입 경험 및 사용 도구:
+4. 문제 해결 스타일:
+5. 팀 역할 및 협업 성향:
+6. 관심 산업 및 해결하고 싶은 문제 유형:
+7. 선호 업무 환경 및 마감 대응:
+
+[가설 생성 규칙]
+- 위 요약의 키워드를 그대로 인용하며 가설을 설명할 것.
+- 가설 1 (전공 연계): 전공과 강점을 살리면서 관심 산업으로 진입할 수 있는 구체적 포지션
+- 가설 2 (숨은 가능성): 전공 밖의 강점(예: 도구, 협업 스타일)을 무기로 삼을 수 있는 의외의 포지션
+- 가설 3 (가치 중심): 사용자의 선호 업무 환경과 가치관에 가장 부합하는 포지션
+- 각 가설에 “왜 {name}님에게 맞는지”를 데이터 근거와 함께 설명할 것.
 
 [중요]
-- 실제 한국의 직무명과 스타트업/대기업 트렌드를 반영하세요.
-- "마케터" 같은 일반론이 아닌, "B2B SaaS의 고객 온보딩 스페셜리스트"처럼 구체적인 포지션을 제시하세요.
-- 각 가설마다 사용자의 성향(예: “혼자 분석하는 일에 강함”, “팀 분위기를 주도하는 성향”)을 연결 지어 설명하세요.
+- 실제 한국의 직무명과 트렌드를 반영할 것.
+- “마케터” 같은 일반론이 아닌, “B2B SaaS의 고객 온보딩 스페셜리스트”처럼 구체적으로.
 - 내일은 선택한 가설로 검증 계획을 세울 것이라고 예고하세요.""",
 
-            7: f"""[Day 7 지침 - 검증 로드맵]
-오늘의 목표: {name}님이 선택한 커리어 가설을 검증할 3페이즈 로드맵을 제공하세요.
+            7: f"""[Day 7 지침 - 검증 로드맵 (개인화 의무)]
+오늘의 목표: {name}님이 선택한 가설을 **실제 데이터 기반**으로 검증할 3페이즈 로드맵을 제공하세요.
+모든 추천은 {name}님의 강점, 도구 숙련도, 관심 산업을 반영해야 합니다.
 
-진행 방식:
-1. Phase 1 탐색 (0~1개월): 무료로 바로 시작할 수 있는 것들
-   - 추천 뉴스레터, 팟캐스트, 유튜브 채널
-   - 링크드인 검색 팁 (어떤 키워드로 검색해야 하는지)
-2. Phase 2 경험 (1~3개월): 작은 실험들
-   - 추천 해커톤/공모전 (실제로 있는 것들)
-   - 미니 포트폴리오 프로젝트 아이디어
-   - 현직자 정보 인터뷰 방법
-3. Phase 3 진입 (3~6개월): 시장에 신호 보내기
-   - 추천 기업 유형 및 실제 채용 플랫폼
-   - 지원 시 강조할 포인트
+[필수 포함 사항]
+1. Phase 1 탐색 (0~1개월):
+   - {name}님의 관심 산업과 해결하고 싶은 문제 유형에 꼭 맞는 뉴스레터/팟캐스트/유튜브 채널
+   - 링크드인 검색 키워드 (예: "UI 디자이너 + 콘텐츠 스타트업")
+2. Phase 2 경험 (1~3개월):
+   - {name}님의 강점(예: 피그마, 애프터 이펙트)을 활용할 수 있는 실제 해커톤/공모전/부트캠프
+   - 기존 작업물을 포트폴리오로 발전시키는 구체적 아이디어
+3. Phase 3 진입 (3~6개월):
+   - {name}님의 선호 업무 환경(예: 혼자 몰입 후 짧은 싱크업)을 갖춘 기업 유형
+   - 지원 시 강조할 차별화 포인트 (데이터에서 추출)
 
-마지막으로 7일 여정 소회를 묻고, 최종적으로 "당신의 무기"를 한 줄로 정의해주세요.
-이 "무기" 안에는 직무 스킬뿐 아니라 성향(예: "혼자 깊게 분석하여 팀에 인사이트를 주는 사람")도 포함되어야 합니다.
-
-[중요]
-- 실제 존재하는 한국의 해커톤, 공모전, 채용 플랫폼을 언급하세요.
-- 구체적인 링크나 검색 키워드를 제공하세요.
+[마무리]
+- 7일 여정 소회를 묻고, “당신의 무기”를 한 줄로 정의하세요.
+- 이 무기에는 **학과, 강점, 성향, 산업**이 모두 포함되어야 합니다.
 - 감동적인 마무리 메시지로 7일 여정을 마무리하세요. ☀️"""
         }
         return instructions.get(day_number, f"{name}님과의 대화를 이어가세요.")
