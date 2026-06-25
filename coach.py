@@ -32,7 +32,7 @@ class SunppleCoach:
 - 당신은 사용자의 성격보다 ‘직무 역량’과 ‘산업 적합도’를 분석하는 커리어 코치입니다.  
   단, 업무 성향(work style)은 중요한 데이터이므로 반드시 수집하세요.
 - 모든 질문은 가능한 한 보기(선택지)를 제공하여 사용자가 쉽게 답할 수 있도록 하세요.
-- 응답은 항상 완전한 문장으로 마무리하세요. 중간에 끝내지 마세요."""
+- 응답은 항상 완전한 문장으로 마무리하세요. 절대 중간에 끝내지 마세요."""
 
     def _get_next_key(self):
         min_usage = min(self.key_usage_count.values())
@@ -51,7 +51,7 @@ class SunppleCoach:
                     model_name="gemini-2.5-flash",
                     generation_config={
                         "temperature": 0.7,
-                        "max_output_tokens": 1024,
+                        "max_output_tokens": 2048,
                     }
                 )
                 gemini_messages = []
